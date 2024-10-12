@@ -1,31 +1,46 @@
 class GithubTechFinderService
-  COMPANY_LIMIT = 5
+  ORG_LIMIT = 10
 
-  def initialize(access_token)
-    @client = Octokit::Client.new(access_token: access_token)
+  def initialize(location, language = nil)
+    @client = Octokit::Client.new(access_token: ENV['GITHUB_ACCESS_TOKEN'])
+    @location = location
+    @language = language
   end
 
-  def find_tech_stacks(location)
-    companies = find_companies_by_location(location)
-    companies.map { |company| analyze_company(company.login) }
+  def find_tech_stacks
+    orgs = fetch_orgs
+    tech_stacks = orgs.map { |org| org_tech_stack(org.login) }
+    filter_by_language(tech_stacks)
   end
 
   private
 
-  def find_companies_by_location(location)
-    results = @client.search_users("location:#{location} type:organization", per_page: COMPANY_LIMIT)
-    results.items.take(COMPANY_LIMIT)
+  def fetch_orgs
+    results = @client.search_users("location:#{@location} type:organization sort:followers-desc", per_page: ORG_LIMIT)
+    results.items.take(ORG_LIMIT)
   end
 
-  def analyze_company(company_name)
-    repos = @client.repositories(company_name)
-    languages = repos.map(&:language).compact
-    language_counts = languages.each_with_object(Hash.new(0)) { |lang, counts| counts[lang] += 1 }
+  def org_tech_stack(org_name)
+    user = @client.user(org_name)
+    repos = @client.repositories(org_name, query: { sort: 'updated', direction: 'desc', per_page: 20 })
+    languages = count_languages(repos)
 
     {
-      name: company_name,
-      repository_count: repos.count,
-      languages: language_counts
+      name: org_name,
+      repository_count: user.public_repos,
+      languages: languages,
+      avatar: user.avatar_url,
+      url: user.html_url
     }
+  end
+
+  def count_languages(repos)
+    languages = repos.map(&:language).compact
+    languages.each_with_object(Hash.new(0)) { |lang, counts| counts[lang] += 1 }
+  end
+
+  def filter_by_language(tech_stacks)
+    return tech_stacks unless @language
+    tech_stacks.select { |stack| stack[:languages].key?(@language) }
   end
 end
